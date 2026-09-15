@@ -214,6 +214,10 @@
   @media (max-width: 640px) { .compact-grid { grid-template-columns: 1fr; } }
   .compact-grid table th, .compact-grid table td { font-size: 12.5px; padding: 6px 8px; }
   .compact-label { font-size: 12.5px; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* Tight, dense table (Weekly Scoring — many week columns) */
+  .tight-table th, .tight-table td { font-size: 12px; padding: 5px 7px; white-space: nowrap; }
+  .tight-table td.team, .tight-table th:first-child { white-space: normal; }
 </style>
 </head>
 <body>
@@ -1127,10 +1131,20 @@ function renderTeamComparisonTab() {
       <p class="sub">Total started points by position group, and each group's share of the team's total scoring (completed weeks only) — click a column header to sort</p>
       <div id="positionBreakdownTableWrap"></div>
     </section>
+    <section class="block">
+      <h2>Roto Scoring by Position</h2>
+      <p class="sub">
+        Within each position, teams are ranked by total points and scored like rotisserie: the top team earns
+        ${Object.keys(TEAMS).length} points, the last-place team earns 1. Tied teams split the points those ranks would
+        otherwise earn — e.g. two teams tied for 1st each get the average of 1st and 2nd. Click a column header to sort.
+      </p>
+      <div id="rotoScoringTableWrap"></div>
+    </section>
   `;
 
   renderWeeklyScoringTable();
   renderPositionBreakdownTable();
+  renderRotoScoringTable();
 }
 
 function renderPositionBreakdownTable() {
@@ -1187,6 +1201,98 @@ function setPositionBreakdownSort(key) {
   renderPositionBreakdownTable();
 }
 
+// Rotisserie-style scoring: within each position, the team with the most
+// total points earns N points (N = number of teams), next earns N-1, down
+// to 1 for last place. Teams tied at a position split the points those tied
+// ranks would otherwise earn -- e.g. with 12 teams, two teams tied for the
+// top spot (which would earn 12 and 11) each get 11.5, and the next team
+// still gets 10 (3rd place, unaffected by the tie above it).
+function computeRotoScoring() {
+  const breakdown = computePositionBreakdown();
+  const posKeys = Object.keys(POSITION_LABELS);
+  const N = breakdown.length;
+
+  const rotoByTeam = {};
+  breakdown.forEach(t => { rotoByTeam[t.id] = { id: t.id, name: t.name }; });
+
+  posKeys.forEach(pos => {
+    const sortedByPos = [...breakdown].sort((a, b) => (b.positions[pos] || 0) - (a.positions[pos] || 0));
+    let i = 0;
+    while (i < sortedByPos.length) {
+      let j = i;
+      while (j + 1 < sortedByPos.length && (sortedByPos[j + 1].positions[pos] || 0) === (sortedByPos[i].positions[pos] || 0)) j++;
+      // ranks i+1..j+1 (1-indexed) are tied; average them
+      let rankSum = 0;
+      for (let r = i + 1; r <= j + 1; r++) rankSum += r;
+      const avgRank = rankSum / (j - i + 1);
+      const points = N - avgRank + 1;
+      for (let k = i; k <= j; k++) {
+        rotoByTeam[sortedByPos[k].id][pos] = points;
+      }
+      i = j + 1;
+    }
+  });
+
+  Object.values(rotoByTeam).forEach(t => {
+    t.total = posKeys.reduce((sum, pos) => sum + (t[pos] || 0), 0);
+  });
+
+  return { rows: Object.values(rotoByTeam), teamsCount: N };
+}
+
+let rotoScoringSort = { key: 'total', dir: 'desc' };
+
+function renderRotoScoringTable() {
+  const { rows, teamsCount } = computeRotoScoring();
+  const posKeys = Object.keys(POSITION_LABELS);
+  const key = rotoScoringSort.key;
+  const dir = rotoScoringSort.dir;
+
+  const sorted = [...rows].sort((a, b) => {
+    let av, bv;
+    if (key === 'name') { av = a.name; bv = b.name; }
+    else { av = a[key] || 0; bv = b[key] || 0; }
+    if (typeof av === 'string') return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    return dir === 'asc' ? av - bv : bv - av;
+  });
+
+  const arrow = k => rotoScoringSort.key === k ? (rotoScoringSort.dir === 'asc' ? ' \u25B2' : ' \u25BC') : '';
+  const fmt = v => (v === undefined || v === null) ? '—' : (Number.isInteger(v) ? `${v}` : v.toFixed(1));
+
+  const wrap = document.getElementById('rotoScoringTableWrap');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <div class="table-scroll">
+    <table>
+      <thead><tr>
+        <th class="sortable" onclick="setRotoScoringSort('name')">Team${arrow('name')}</th>
+        ${posKeys.map(k => `<th class="num sortable" onclick="setRotoScoringSort('${k}')">${POSITION_LABELS[k]}${arrow(k)}</th>`).join('')}
+        <th class="num sortable" onclick="setRotoScoringSort('total')">Total${arrow('total')}</th>
+      </tr></thead>
+      <tbody>
+        ${sorted.map((t, i) => `
+          <tr class="${i === 0 ? 'rank1' : ''}">
+            <td class="team">${t.name}</td>
+            ${posKeys.map(k => `<td class="num">${fmt(t[k])}</td>`).join('')}
+            <td class="num">${fmt(t.total)}</td>
+          </tr>`).join('') || `<tr><td colspan="${posKeys.length + 2}" class="placeholder">No box score data yet.</td></tr>`}
+      </tbody>
+    </table>
+    </div>
+  `;
+}
+
+function setRotoScoringSort(key) {
+  if (rotoScoringSort.key === key) {
+    rotoScoringSort.dir = rotoScoringSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    rotoScoringSort.key = key;
+    rotoScoringSort.dir = key === 'name' ? 'asc' : 'desc';
+  }
+  renderRotoScoringTable();
+}
+
+
 function renderWeeklyScoringTable() {
   const { weeks, rows } = computeWeeklyScoringTable();
   const key = weeklyScoringSort.key;
@@ -1207,18 +1313,18 @@ function renderWeeklyScoringTable() {
   if (!wrap) return;
   wrap.innerHTML = `
     <div class="table-scroll">
-    <table>
+    <table class="tight-table">
       <thead><tr>
         <th class="sortable" onclick="setWeeklyScoringSort('name')">Team${arrow('name')}</th>
-        ${weeks.map(w => `<th class="num sortable" onclick="setWeeklyScoringSort(${w})">Wk ${w}${arrow(w)}</th>`).join('')}
         <th class="num sortable" onclick="setWeeklyScoringSort('avg')">Avg${arrow('avg')}</th>
+        ${weeks.map(w => `<th class="num sortable" onclick="setWeeklyScoringSort(${w})">Wk ${w}${arrow(w)}</th>`).join('')}
       </tr></thead>
       <tbody>
         ${sorted.map(r => `
           <tr>
             <td class="team">${r.name}</td>
-            ${weeks.map(w => `<td class="num">${r.scores[w] !== null ? r.scores[w].toFixed(1) : '—'}</td>`).join('')}
             <td class="num">${r.avg !== null ? r.avg.toFixed(1) : '—'}</td>
+            ${weeks.map(w => `<td class="num">${r.scores[w] !== null ? r.scores[w].toFixed(1) : '—'}</td>`).join('')}
           </tr>`).join('') || `<tr><td colspan="${weeks.length + 2}" class="placeholder">No completed weeks yet.</td></tr>`}
       </tbody>
     </table>
