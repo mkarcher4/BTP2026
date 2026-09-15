@@ -193,7 +193,7 @@
 
   .placeholder { color: var(--text-muted); font-size: 14px; padding: 30px 0; text-align: center; }
 
-  /* Wide tables (Standings Comparison, Position Breakdown, H2H matrix) */
+  /* Wide tables (Standings Comparison, Position Breakdown, Weekly Scoring) */
   .table-scroll { overflow-x: auto; }
   .table-scroll table { min-width: 640px; }
 
@@ -205,26 +205,18 @@
   .luck-neg { color: var(--loss); }
   .luck-zero { color: var(--text-muted); }
 
-  /* Chart */
-  .chart-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-  .chart-wrap canvas { max-height: 380px; }
+  /* Sortable table headers */
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--text); }
 
-  /* Team History pair selector */
-  .h2h-picker { display: flex; align-items: center; gap: 10px; margin: 18px 0 12px; flex-wrap: wrap; }
-  .h2h-picker select {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 7px 10px;
-    border-radius: 6px;
-    font-size: 14px;
-  }
-  .h2h-summary { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
-  .h2h-matrix td.self { color: var(--text-muted); text-align: center; }
+  /* Compact side-by-side tables (Weekly High/Low Scorers) */
+  .compact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 640px) { .compact-grid { grid-template-columns: 1fr; } }
+  .compact-grid table th, .compact-grid table td { font-size: 12.5px; padding: 6px 8px; }
+  .compact-label { font-size: 12.5px; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
 </style>
 </head>
 <body>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <div class="wrap">
   <header class="top">
     <h1 id="leagueTitle">League Tracker</h1>
@@ -246,14 +238,12 @@
       <button data-tab="matchups">Matchups</button>
       <button data-tab="boxscore">Box Score</button>
       <button data-tab="teamcompare">Team Comparison</button>
-      <button data-tab="teamhistory">Team History</button>
     </nav>
 
     <div id="view-standings" class="view active"></div>
     <div id="view-matchups" class="view"></div>
     <div id="view-boxscore" class="view"></div>
     <div id="view-teamcompare" class="view"></div>
-    <div id="view-teamhistory" class="view"></div>
   </div>
 </div>
 
@@ -693,24 +683,28 @@ function renderStandings() {
       </table>
     </section>
     <section class="block">
-      <h2>Weekly High Scorers</h2>
-      <p class="sub">Top scoring team each week — each win earns the $${WEEKLY_PRIZE} weekly prize</p>
-      <table>
-        <thead><tr><th class="num">Week</th><th>Team</th><th class="num">Points</th></tr></thead>
-        <tbody>
-          ${highScores.map(h => `<tr><td class="num">${h.week}</td><td class="team">${h.name}</td><td class="num">${h.points.toFixed(1)}</td></tr>`).join('') || '<tr><td colspan="3" class="placeholder">No completed weeks yet.</td></tr>'}
-        </tbody>
-      </table>
-    </section>
-    <section class="block">
-      <h2>Weekly Lowest Scorers</h2>
-      <p class="sub">Lowest scoring team each week</p>
-      <table>
-        <thead><tr><th class="num">Week</th><th>Team</th><th class="num">Points</th></tr></thead>
-        <tbody>
-          ${lowScores.map(h => `<tr><td class="num">${h.week}</td><td class="team">${h.name}</td><td class="num">${h.points.toFixed(1)}</td></tr>`).join('') || '<tr><td colspan="3" class="placeholder">No completed weeks yet.</td></tr>'}
-        </tbody>
-      </table>
+      <h2>Weekly Extremes</h2>
+      <p class="sub">Highest and lowest scoring team each week — a High Score win earns the $${WEEKLY_PRIZE} weekly prize</p>
+      <div class="compact-grid">
+        <div>
+          <div class="compact-label" style="color:var(--win);">Highest Scorer</div>
+          <table>
+            <thead><tr><th class="num">Week</th><th>Team</th><th class="num">Points</th></tr></thead>
+            <tbody>
+              ${highScores.map(h => `<tr><td class="num">${h.week}</td><td class="team">${h.name}</td><td class="num">${h.points.toFixed(1)}</td></tr>`).join('') || '<tr><td colspan="3" class="placeholder">No completed weeks yet.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <div class="compact-label" style="color:var(--loss);">Lowest Scorer</div>
+          <table>
+            <thead><tr><th class="num">Week</th><th>Team</th><th class="num">Points</th></tr></thead>
+            <tbody>
+              ${lowScores.map(h => `<tr><td class="num">${h.week}</td><td class="team">${h.name}</td><td class="num">${h.points.toFixed(1)}</td></tr>`).join('') || '<tr><td colspan="3" class="placeholder">No completed weeks yet.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </section>
     <section class="block">
       <h2>Standings Comparison</h2>
@@ -1064,12 +1058,9 @@ function backToMatchups() {
 
 // ---------- Team Comparison tab ----------
 
-const CHART_PALETTE = ['#5fb85a', '#d9a441', '#d9634a', '#4a90d9', '#a45fd9', '#d94aa0',
-  '#4ad9c4', '#d9d14a', '#8892a0', '#ff8fa3', '#7ed6df', '#f6b93b'];
-
-let WEEKLY_CHART_INSTANCE = null;
-
 const POSITION_LABELS = { QB: 'QB', RB: 'RB', WR: 'WR', TE: 'TE', K: 'K', DST: 'D/ST' };
+
+let weeklyScoringSort = { key: 'name', dir: 'asc' };
 
 // Aggregates each team's STARTED points by position group (actual position,
 // not lineup slot -- so a RB started at FLEX still counts under RB), across
@@ -1106,6 +1097,21 @@ function computePositionBreakdown() {
   }).sort((a, b) => b.total - a.total);
 }
 
+function computeWeeklyScoringTable() {
+  const weeks = Object.keys(WEEKLY).map(Number).sort((a, b) => a - b);
+  const rows = Object.keys(TEAMS).map(id => {
+    const scores = {};
+    weeks.forEach(w => {
+      const entry = (WEEKLY[w] || []).find(s => String(s.teamId) === String(id));
+      scores[w] = entry ? entry.points : null;
+    });
+    const played = weeks.filter(w => scores[w] !== null);
+    const avg = played.length ? played.reduce((sum, w) => sum + scores[w], 0) / played.length : null;
+    return { id, name: teamName(TEAMS[id]), scores, avg };
+  });
+  return { weeks, rows };
+}
+
 function renderTeamComparisonTab() {
   const container = document.getElementById('view-teamcompare');
   const breakdown = computePositionBreakdown();
@@ -1113,9 +1119,9 @@ function renderTeamComparisonTab() {
 
   container.innerHTML = `
     <section class="block">
-      <h2>Weekly Scoring Chart</h2>
-      <p class="sub">Actual points scored by each team, week over week — click a name in the legend to toggle it</p>
-      <div class="chart-wrap"><canvas id="weeklyScoreChart"></canvas></div>
+      <h2>Weekly Scoring</h2>
+      <p class="sub">Actual points scored by each team, week over week — click a column header to sort</p>
+      <div id="weeklyScoringTableWrap"></div>
     </section>
     <section class="block">
       <h2>Position Strength Breakdown</h2>
@@ -1142,195 +1148,56 @@ function renderTeamComparisonTab() {
     </section>
   `;
 
-  renderWeeklyScoreChart();
+  renderWeeklyScoringTable();
 }
 
-function renderWeeklyScoreChart() {
-  const canvas = document.getElementById('weeklyScoreChart');
-  if (!canvas || typeof Chart === 'undefined') return;
+function renderWeeklyScoringTable() {
+  const { weeks, rows } = computeWeeklyScoringTable();
+  const key = weeklyScoringSort.key;
+  const dir = weeklyScoringSort.dir;
 
-  const weeks = Object.keys(WEEKLY).map(Number).sort((a, b) => a - b);
-  const labels = weeks.map(w => 'Wk ' + w);
-  const teamIds = Object.keys(TEAMS);
-
-  const datasets = teamIds.map((id, idx) => {
-    const data = weeks.map(w => {
-      const entry = (WEEKLY[w] || []).find(s => String(s.teamId) === String(id));
-      return entry ? entry.points : null;
-    });
-    return {
-      label: teamName(TEAMS[id]),
-      data,
-      borderColor: CHART_PALETTE[idx % CHART_PALETTE.length],
-      backgroundColor: 'transparent',
-      tension: 0.25,
-      spanGaps: true,
-      pointRadius: 3
-    };
+  const sorted = [...rows].sort((a, b) => {
+    let av, bv;
+    if (key === 'name') { av = a.name; bv = b.name; }
+    else if (key === 'avg') { av = a.avg ?? -Infinity; bv = b.avg ?? -Infinity; }
+    else { av = a.scores[key] ?? -Infinity; bv = b.scores[key] ?? -Infinity; }
+    if (typeof av === 'string') return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    return dir === 'asc' ? av - bv : bv - av;
   });
 
-  if (WEEKLY_CHART_INSTANCE) WEEKLY_CHART_INSTANCE.destroy();
-  WEEKLY_CHART_INSTANCE = new Chart(canvas.getContext('2d'), {
-    type: 'line',
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      interaction: { mode: 'nearest', intersect: false },
-      plugins: {
-        legend: { labels: { color: '#edeff2', boxWidth: 12, font: { size: 11 } } }
-      },
-      scales: {
-        x: { ticks: { color: '#8892a0' }, grid: { color: '#2c3542' } },
-        y: { ticks: { color: '#8892a0' }, grid: { color: '#2c3542' } }
-      }
-    }
-  });
-}
+  const arrow = k => weeklyScoringSort.key === k ? (weeklyScoringSort.dir === 'asc' ? ' \u25B2' : ' \u25BC') : '';
 
-// ---------- Team History tab ----------
-// Designed to extend beyond the current season: getAllSeasonsData() is the
-// single place that assembles which seasons' schedules feed the head-to-head
-// calculations. Today it only has the currently loaded LEAGUE data (2026).
-// A future edition can add prior seasons by populating LEAGUE.priorSeasons
-// (an array of { season, schedule, teams } objects, one per past year,
-// merged in the same way historical data is normally exported) without
-// touching the H2H math or the UI below -- the season picker will simply
-// gain more entries and the matrix/pair-history views will aggregate across
-// whichever seasons are selected.
-function getAllSeasonsData() {
-  const seasons = [{ season: LEAGUE.season, schedule: LEAGUE.schedule, teams: LEAGUE.teams }];
-  if (Array.isArray(LEAGUE.priorSeasons)) {
-    LEAGUE.priorSeasons.forEach(s => seasons.push(s));
-  }
-  return seasons.sort((a, b) => b.season - a.season);
-}
-
-// Builds a head-to-head game log keyed by "smallerTeamId-largerTeamId" from
-// one or more seasons' schedule arrays.
-function computeHeadToHead(seasonsData) {
-  const h2h = {};
-  seasonsData.forEach(({ season, schedule }) => {
-    (schedule || []).forEach(m => {
-      if (!m.home || !m.away) return; // bye week
-      const homeDone = typeof m.home.totalPoints === 'number' && m.home.totalPoints > 0;
-      const awayDone = typeof m.away.totalPoints === 'number' && m.away.totalPoints > 0;
-      if (!homeDone && !awayDone) return; // not played yet
-      const a = m.home.teamId, b = m.away.teamId;
-      const key = [a, b].sort((x, y) => x - y).join('-');
-      if (!h2h[key]) h2h[key] = [];
-      h2h[key].push({
-        season, week: m.matchupPeriodId,
-        teamA: a, teamB: b,
-        scoreA: m.home.totalPoints || 0,
-        scoreB: m.away.totalPoints || 0
-      });
-    });
-  });
-  return h2h;
-}
-
-function getRecordBetween(h2h, teamX, teamY) {
-  const key = [teamX, teamY].sort((a, b) => a - b).join('-');
-  const games = (h2h[key] || []).slice().sort((g1, g2) => g1.season - g2.season || g1.week - g2.week);
-  let wins = 0, losses = 0, ties = 0;
-  games.forEach(g => {
-    const xScore = g.teamA === teamX ? g.scoreA : g.scoreB;
-    const yScore = g.teamA === teamX ? g.scoreB : g.scoreA;
-    if (xScore > yScore) wins++;
-    else if (xScore < yScore) losses++;
-    else ties++;
-  });
-  return { wins, losses, ties, games };
-}
-
-function renderTeamHistoryTab() {
-  const container = document.getElementById('view-teamhistory');
-  const seasonsData = getAllSeasonsData();
-  const h2h = computeHeadToHead(seasonsData);
-  const teamIds = Object.keys(TEAMS);
-  const seasonLabel = seasonsData.length > 1
-    ? `${seasonsData[seasonsData.length - 1].season}–${seasonsData[0].season}`
-    : `${seasonsData[0].season}`;
-
-  const matrixRows = teamIds.map(rowId => `
-    <tr>
-      <td class="team">${teamName(TEAMS[rowId])}</td>
-      ${teamIds.map(colId => {
-        if (colId === rowId) return `<td class="self">—</td>`;
-        const rec = getRecordBetween(h2h, Number(rowId), Number(colId));
-        if (rec.games.length === 0) return `<td class="num" style="color:var(--text-muted);">–</td>`;
-        return `<td class="num">${rec.wins}-${rec.losses}${rec.ties ? '-' + rec.ties : ''}</td>`;
-      }).join('')}
-    </tr>`).join('');
-
-  container.innerHTML = `
-    <section class="block">
-      <h2>Head-to-Head Matrix</h2>
-      <p class="sub">Each row's record against each column, ${seasonLabel} — reads as "row team's record vs column team"</p>
-      <div class="table-scroll h2h-matrix">
-        <table>
-          <thead><tr><th></th>${teamIds.map(id => `<th class="num">${teamName(TEAMS[id])}</th>`).join('')}</tr></thead>
-          <tbody>${matrixRows}</tbody>
-        </table>
-      </div>
-    </section>
-    <section class="block">
-      <h2>Matchup History</h2>
-      <p class="sub">Pick two teams to see every game between them</p>
-      <div class="h2h-picker">
-        <select id="h2hTeamA"></select>
-        <span style="color:var(--text-muted);">vs</span>
-        <select id="h2hTeamB"></select>
-      </div>
-      <div id="h2hResult"></div>
-    </section>
+  const wrap = document.getElementById('weeklyScoringTableWrap');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <div class="table-scroll">
+    <table>
+      <thead><tr>
+        <th class="sortable" onclick="setWeeklyScoringSort('name')">Team${arrow('name')}</th>
+        ${weeks.map(w => `<th class="num sortable" onclick="setWeeklyScoringSort(${w})">Wk ${w}${arrow(w)}</th>`).join('')}
+        <th class="num sortable" onclick="setWeeklyScoringSort('avg')">Avg${arrow('avg')}</th>
+      </tr></thead>
+      <tbody>
+        ${sorted.map(r => `
+          <tr>
+            <td class="team">${r.name}</td>
+            ${weeks.map(w => `<td class="num">${r.scores[w] !== null ? r.scores[w].toFixed(1) : '—'}</td>`).join('')}
+            <td class="num">${r.avg !== null ? r.avg.toFixed(1) : '—'}</td>
+          </tr>`).join('') || `<tr><td colspan="${weeks.length + 2}" class="placeholder">No completed weeks yet.</td></tr>`}
+      </tbody>
+    </table>
+    </div>
   `;
+}
 
-  const selA = document.getElementById('h2hTeamA');
-  const selB = document.getElementById('h2hTeamB');
-  teamIds.forEach(id => {
-    const optA = document.createElement('option'); optA.value = id; optA.textContent = teamName(TEAMS[id]);
-    selA.appendChild(optA);
-    const optB = document.createElement('option'); optB.value = id; optB.textContent = teamName(TEAMS[id]);
-    selB.appendChild(optB);
-  });
-  if (teamIds.length > 1) selB.selectedIndex = 1;
-
-  const renderPairResult = () => {
-    const teamX = Number(selA.value), teamY = Number(selB.value);
-    const wrap = document.getElementById('h2hResult');
-    if (teamX === teamY) {
-      wrap.innerHTML = '<p class="placeholder">Pick two different teams.</p>';
-      return;
-    }
-    const rec = getRecordBetween(h2h, teamX, teamY);
-    if (rec.games.length === 0) {
-      wrap.innerHTML = '<p class="placeholder">These teams haven\'t played each other yet.</p>';
-      return;
-    }
-    wrap.innerHTML = `
-      <p class="h2h-summary">${teamName(TEAMS[teamX])} leads/trails ${teamName(TEAMS[teamY])} ${rec.wins}-${rec.losses}${rec.ties ? '-' + rec.ties : ''}</p>
-      <table>
-        <thead><tr><th>Season</th><th class="num">Week</th><th>${teamName(TEAMS[teamX])}</th><th>${teamName(TEAMS[teamY])}</th></tr></thead>
-        <tbody>
-          ${rec.games.map(g => {
-            const xScore = g.teamA === teamX ? g.scoreA : g.scoreB;
-            const yScore = g.teamA === teamX ? g.scoreB : g.scoreA;
-            return `<tr>
-              <td>${g.season}</td>
-              <td class="num">${g.week}</td>
-              <td class="num" style="color:${xScore > yScore ? 'var(--win)' : xScore < yScore ? 'var(--loss)' : 'var(--text)'}">${xScore.toFixed(1)}</td>
-              <td class="num" style="color:${yScore > xScore ? 'var(--win)' : yScore < xScore ? 'var(--loss)' : 'var(--text)'}">${yScore.toFixed(1)}</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    `;
-  };
-
-  selA.addEventListener('change', renderPairResult);
-  selB.addEventListener('change', renderPairResult);
-  renderPairResult();
+function setWeeklyScoringSort(key) {
+  if (weeklyScoringSort.key === key) {
+    weeklyScoringSort.dir = weeklyScoringSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    weeklyScoringSort.key = key;
+    weeklyScoringSort.dir = key === 'name' ? 'asc' : 'desc';
+  }
+  renderWeeklyScoringTable();
 }
 
 document.querySelectorAll('nav.tabs button').forEach(btn => {
@@ -1340,7 +1207,6 @@ document.querySelectorAll('nav.tabs button').forEach(btn => {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById('view-' + btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'teamcompare') renderTeamComparisonTab();
-    if (btn.dataset.tab === 'teamhistory') renderTeamHistoryTab();
   });
 });
 </script>
