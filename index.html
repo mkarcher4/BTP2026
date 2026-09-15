@@ -179,6 +179,8 @@
   }
   .box-header .score { font-size: 30px; font-weight: 800; }
   .box-header .away { text-align: right; }
+  .whatif { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .whatif-diff { color: var(--gold); font-weight: 700; }
   .roster-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
   @media (max-width: 640px) { .roster-grid { grid-template-columns: 1fr; } }
   .roster-grid table td, .roster-grid table th { font-size: 13px; padding: 6px 4px; }
@@ -186,6 +188,8 @@
   .bench-divider td { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 14px; border-bottom: none; }
   tr.outperformed td { color: var(--loss); }
   tr.outperformed td.slot { color: var(--loss); opacity: 0.85; }
+  tr.should-start td { color: var(--win); }
+  tr.should-start td.slot { color: var(--win); opacity: 0.85; }
 
   .placeholder { color: var(--text-muted); font-size: 14px; padding: 30px 0; text-align: center; }
 </style>
@@ -633,7 +637,12 @@ function rosterRows(sideData, week) {
     const player = getPlayer(e);
     const name = player ? player.fullName : 'Unknown';
     const pts = getPlayerPoints(e, week);
-    return `<tr><td class="slot">${SLOT_NAMES[e.lineupSlotId] || e.lineupSlotId}</td><td>${name}</td><td class="num">${pts !== null ? pts.toFixed(1) : '—'}</td></tr>`;
+    const shouldStart = pts !== null && starters.some(s => {
+      if (!benchCandidateEligible(e, s.lineupSlotId)) return false;
+      const sPts = getPlayerPoints(s, week);
+      return sPts !== null && pts > sPts;
+    });
+    return `<tr class="${shouldStart ? 'should-start' : ''}"><td class="slot">${SLOT_NAMES[e.lineupSlotId] || e.lineupSlotId}</td><td>${name}</td><td class="num">${pts !== null ? pts.toFixed(1) : '—'}</td></tr>`;
   };
 
   let html = starters.map(starterRow).join('');
@@ -644,6 +653,61 @@ function rosterRows(sideData, week) {
     html = `<tr><td colspan="3" class="placeholder">No roster data for this week.</td></tr>`;
   }
   return html;
+}
+
+function getPositionGroup(entry) {
+  const player = getPlayer(entry);
+  if (!player) return null;
+  const slots = player.eligibleSlots;
+  if (Array.isArray(slots) && slots.length) {
+    if (slots.includes(0)) return 'QB';
+    if (slots.includes(2)) return 'RB';
+    if (slots.includes(4)) return 'WR';
+    if (slots.includes(6)) return 'TE';
+    if (slots.includes(16)) return 'DST';
+    if (slots.includes(17)) return 'K';
+  }
+  const map = { 1: 'QB', 2: 'RB', 3: 'WR', 4: 'TE', 5: 'K', 16: 'DST' };
+  return map[player.defaultPositionId] || null;
+}
+
+function computeOptimalScore(sideData, week) {
+  const entries = getRosterEntries(sideData);
+  const withPoints = entries.map(e => ({ e, pts: getPlayerPoints(e, week) ?? 0, pos: getPositionGroup(e) }));
+
+  const byPos = { QB: [], RB: [], WR: [], TE: [], K: [], DST: [] };
+  withPoints.forEach(x => { if (byPos[x.pos]) byPos[x.pos].push(x); });
+  Object.values(byPos).forEach(arr => arr.sort((a, b) => b.pts - a.pts));
+
+  let total = 0;
+  const used = new Set();
+
+  function takeTop(pos, count) {
+    const arr = byPos[pos] || [];
+    let taken = 0;
+    for (const item of arr) {
+      if (taken >= count) break;
+      used.add(item.e);
+      total += item.pts;
+      taken++;
+    }
+  }
+
+  takeTop('QB', 1);
+  takeTop('RB', 2);
+  takeTop('WR', 2);
+  takeTop('TE', 1);
+  takeTop('DST', 1);
+  takeTop('K', 1);
+
+  // FLEX: best remaining RB/WR/TE not already used in a fixed slot
+  const flexCandidates = ['RB', 'WR', 'TE']
+    .flatMap(pos => byPos[pos] || [])
+    .filter(x => !used.has(x.e))
+    .sort((a, b) => b.pts - a.pts);
+  if (flexCandidates.length) total += flexCandidates[0].pts;
+
+  return total;
 }
 
 function openBoxScore(week, homeId, awayId) {
@@ -660,17 +724,28 @@ function openBoxScore(week, homeId, awayId) {
   const homeRoster = match ? rosterRows(match.home, week) : '<tr><td colspan="3" class="placeholder">No box score data loaded for this week.</td></tr>';
   const awayRoster = match ? rosterRows(match.away, week) : '<tr><td colspan="3" class="placeholder">No box score data loaded for this week.</td></tr>';
 
+  const homeOptimal = match ? computeOptimalScore(match.home, week) : null;
+  const awayOptimal = match ? computeOptimalScore(match.away, week) : null;
+
+  const whatIf = (actual, optimal) => {
+    if (optimal === null) return '';
+    const diff = optimal - actual;
+    return `<div class="whatif">What-if: ${optimal.toFixed(1)}${diff > 0.05 ? ` <span class="whatif-diff">(+${diff.toFixed(1)})</span>` : ''}</div>`;
+  };
+
   document.getElementById('view-boxscore').innerHTML = `
     <span class="back-link" onclick="backToMatchups()">&larr; Back to matchups</span>
     <div class="box-header">
       <div class="home">
         <div class="name">${teamName(home)}</div>
         <div class="score">${(summary.homeScore || 0).toFixed(1)}</div>
+        ${whatIf(summary.homeScore || 0, homeOptimal)}
       </div>
       <div class="vs">WK ${week}</div>
       <div class="away">
         <div class="name">${teamName(away)}</div>
         <div class="score">${(summary.awayScore || 0).toFixed(1)}</div>
+        ${whatIf(summary.awayScore || 0, awayOptimal)}
       </div>
     </div>
     <div class="roster-grid">
