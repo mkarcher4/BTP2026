@@ -1060,7 +1060,8 @@ function backToMatchups() {
 
 const POSITION_LABELS = { QB: 'QB', RB: 'RB', WR: 'WR', TE: 'TE', K: 'K', DST: 'D/ST' };
 
-let weeklyScoringSort = { key: 'name', dir: 'asc' };
+let weeklyScoringSort = { key: 'avg', dir: 'desc' };
+let positionBreakdownSort = { key: 'total', dir: 'desc' };
 
 // Aggregates each team's STARTED points by position group (actual position,
 // not lineup slot -- so a RB started at FLEX still counts under RB), across
@@ -1114,8 +1115,6 @@ function computeWeeklyScoringTable() {
 
 function renderTeamComparisonTab() {
   const container = document.getElementById('view-teamcompare');
-  const breakdown = computePositionBreakdown();
-  const posKeys = Object.keys(POSITION_LABELS);
 
   container.innerHTML = `
     <section class="block">
@@ -1125,30 +1124,67 @@ function renderTeamComparisonTab() {
     </section>
     <section class="block">
       <h2>Position Strength Breakdown</h2>
-      <p class="sub">Total started points by position group, and each group's share of the team's total scoring (completed weeks only)</p>
-      <div class="table-scroll">
-      <table>
-        <thead><tr>
-          <th>Team</th>${posKeys.map(k => `<th class="num">${POSITION_LABELS[k]}</th>`).join('')}<th class="num">Total</th>
-        </tr></thead>
-        <tbody>
-          ${breakdown.map(t => `
-            <tr>
-              <td class="team">${t.name}</td>
-              ${posKeys.map(k => {
-                const pts = t.positions[k] || 0;
-                const pct = t.total > 0 ? (pts / t.total) * 100 : 0;
-                return `<td class="num">${pts.toFixed(1)} <span style="color:var(--text-muted); font-size:11px;">(${pct.toFixed(0)}%)</span></td>`;
-              }).join('')}
-              <td class="num">${t.total.toFixed(1)}</td>
-            </tr>`).join('') || `<tr><td colspan="${posKeys.length + 2}" class="placeholder">No box score data yet.</td></tr>`}
-        </tbody>
-      </table>
-      </div>
+      <p class="sub">Total started points by position group, and each group's share of the team's total scoring (completed weeks only) — click a column header to sort</p>
+      <div id="positionBreakdownTableWrap"></div>
     </section>
   `;
 
   renderWeeklyScoringTable();
+  renderPositionBreakdownTable();
+}
+
+function renderPositionBreakdownTable() {
+  const breakdown = computePositionBreakdown();
+  const posKeys = Object.keys(POSITION_LABELS);
+  const key = positionBreakdownSort.key;
+  const dir = positionBreakdownSort.dir;
+
+  const sorted = [...breakdown].sort((a, b) => {
+    let av, bv;
+    if (key === 'name') { av = a.name; bv = b.name; }
+    else if (key === 'total') { av = a.total; bv = b.total; }
+    else { av = a.positions[key] || 0; bv = b.positions[key] || 0; }
+    if (typeof av === 'string') return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    return dir === 'asc' ? av - bv : bv - av;
+  });
+
+  const arrow = k => positionBreakdownSort.key === k ? (positionBreakdownSort.dir === 'asc' ? ' \u25B2' : ' \u25BC') : '';
+
+  const wrap = document.getElementById('positionBreakdownTableWrap');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <div class="table-scroll">
+    <table>
+      <thead><tr>
+        <th class="sortable" onclick="setPositionBreakdownSort('name')">Team${arrow('name')}</th>
+        ${posKeys.map(k => `<th class="num sortable" onclick="setPositionBreakdownSort('${k}')">${POSITION_LABELS[k]}${arrow(k)}</th>`).join('')}
+        <th class="num sortable" onclick="setPositionBreakdownSort('total')">Total${arrow('total')}</th>
+      </tr></thead>
+      <tbody>
+        ${sorted.map(t => `
+          <tr>
+            <td class="team">${t.name}</td>
+            ${posKeys.map(k => {
+              const pts = t.positions[k] || 0;
+              const pct = t.total > 0 ? (pts / t.total) * 100 : 0;
+              return `<td class="num">${pts.toFixed(1)} <span style="color:var(--text-muted); font-size:11px;">(${pct.toFixed(0)}%)</span></td>`;
+            }).join('')}
+            <td class="num">${t.total.toFixed(1)}</td>
+          </tr>`).join('') || `<tr><td colspan="${posKeys.length + 2}" class="placeholder">No box score data yet.</td></tr>`}
+      </tbody>
+    </table>
+    </div>
+  `;
+}
+
+function setPositionBreakdownSort(key) {
+  if (positionBreakdownSort.key === key) {
+    positionBreakdownSort.dir = positionBreakdownSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    positionBreakdownSort.key = key;
+    positionBreakdownSort.dir = key === 'name' ? 'asc' : 'desc';
+  }
+  renderPositionBreakdownTable();
 }
 
 function renderWeeklyScoringTable() {
