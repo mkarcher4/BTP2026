@@ -184,6 +184,8 @@
   .roster-grid table td, .roster-grid table th { font-size: 13px; padding: 6px 4px; }
   td.slot { color: var(--text-muted); font-size: 11px; width: 42px; }
   .bench-divider td { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 14px; border-bottom: none; }
+  tr.outperformed td { color: var(--loss); }
+  tr.outperformed td.slot { color: var(--loss); opacity: 0.85; }
 
   .placeholder { color: var(--text-muted); font-size: 14px; padding: 30px 0; text-align: center; }
 </style>
@@ -577,21 +579,66 @@ function getPlayerPoints(entry, week) {
   return null;
 }
 
+// Starter slot display order: QB, RB, RB, WR, WR, TE, FLEX, D/ST, K
+const SLOT_PRIORITY = { 0: 0, 2: 1, 4: 2, 6: 3, 23: 4, 16: 5, 17: 6 };
+// Which starter slots a bench player can be checked against, expressed as
+// the lineupSlotId(s) that must appear in the player's eligibleSlots list
+const SLOT_ELIGIBILITY_CHECK = {
+  0: [0],        // QB replaced only by QB
+  2: [2],        // RB replaced only by RB
+  4: [4],        // WR replaced only by WR
+  6: [6],        // TE replaced only by TE
+  16: [16],      // D/ST replaced only by D/ST
+  17: [17],      // K replaced only by K
+  23: [2, 4, 6]  // FLEX replaced by RB, WR, or TE
+};
+// Fallback if a player has no eligibleSlots array: map defaultPositionId instead
+const POSITION_ID_FALLBACK = { 0: [1], 2: [2], 4: [3], 6: [4], 16: [16], 17: [5], 23: [2, 3, 4] };
+
+function getPlayer(entry) {
+  return (entry.playerPoolEntry && entry.playerPoolEntry.player) || entry.player;
+}
+
+function benchCandidateEligible(benchEntry, starterSlotId) {
+  const player = getPlayer(benchEntry);
+  if (!player) return false;
+  if (Array.isArray(player.eligibleSlots) && player.eligibleSlots.length) {
+    const needed = SLOT_ELIGIBILITY_CHECK[starterSlotId] || [];
+    return needed.some(s => player.eligibleSlots.includes(s));
+  }
+  const needed = POSITION_ID_FALLBACK[starterSlotId] || [];
+  return needed.includes(player.defaultPositionId);
+}
+
 function rosterRows(sideData, week) {
   const entries = getRosterEntries(sideData);
-  const starters = entries.filter(e => e.lineupSlotId !== 20 && e.lineupSlotId !== 21);
+  const starters = entries
+    .filter(e => e.lineupSlotId !== 20 && e.lineupSlotId !== 21)
+    .sort((a, b) => (SLOT_PRIORITY[a.lineupSlotId] ?? 99) - (SLOT_PRIORITY[b.lineupSlotId] ?? 99));
   const bench = entries.filter(e => e.lineupSlotId === 20 || e.lineupSlotId === 21);
 
-  const row = e => {
-    const player = (e.playerPoolEntry && e.playerPoolEntry.player) || e.player;
+  const starterRow = e => {
+    const player = getPlayer(e);
+    const name = player ? player.fullName : 'Unknown';
+    const pts = getPlayerPoints(e, week);
+    const outperformed = pts !== null && bench.some(b => {
+      if (!benchCandidateEligible(b, e.lineupSlotId)) return false;
+      const bPts = getPlayerPoints(b, week);
+      return bPts !== null && bPts > pts;
+    });
+    return `<tr class="${outperformed ? 'outperformed' : ''}"><td class="slot">${SLOT_NAMES[e.lineupSlotId] || e.lineupSlotId}</td><td>${name}</td><td class="num">${pts !== null ? pts.toFixed(1) : '—'}</td></tr>`;
+  };
+
+  const benchRow = e => {
+    const player = getPlayer(e);
     const name = player ? player.fullName : 'Unknown';
     const pts = getPlayerPoints(e, week);
     return `<tr><td class="slot">${SLOT_NAMES[e.lineupSlotId] || e.lineupSlotId}</td><td>${name}</td><td class="num">${pts !== null ? pts.toFixed(1) : '—'}</td></tr>`;
   };
 
-  let html = starters.map(row).join('');
+  let html = starters.map(starterRow).join('');
   if (bench.length) {
-    html += `<tr class="bench-divider"><td colspan="3">Bench</td></tr>` + bench.map(row).join('');
+    html += `<tr class="bench-divider"><td colspan="3">Bench</td></tr>` + bench.map(benchRow).join('');
   }
   if (!entries.length) {
     html = `<tr><td colspan="3" class="placeholder">No roster data for this week.</td></tr>`;
