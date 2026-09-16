@@ -59,15 +59,24 @@ def discover_available_seasons():
     history older than 2018 may need additional handling -- if very old
     seasons don't show up, that's the likely reason.
     """
-    url = f"https://fantasy.espn.com/apis/v3/games/ffl/leagueHistory/{LEAGUE_ID}"
+    # Same working domain as every other request in this script -- the
+    # plain fantasy.espn.com domain does not reliably return raw JSON for
+    # this endpoint.
+    url = f"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/leagueHistory/{LEAGUE_ID}"
     current_year = datetime.date.today().year
 
+    resp = None
     try:
         resp = requests.get(url, cookies=COOKIES, headers=HEADERS, timeout=20)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        print(f"Could not discover league history ({e}); falling back to current year only.")
+        # Print status code + a snippet of the raw body so a future failure
+        # is diagnosable straight from the Action log without guessing.
+        status = resp.status_code if resp is not None else "n/a"
+        body_snippet = resp.text[:200] if resp is not None else ""
+        print(f"Could not discover league history (status {status}: {e}); body: {body_snippet!r}")
+        print("Falling back to current year only.")
         return [current_year]
 
     entries = data if isinstance(data, list) else [data]
