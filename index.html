@@ -251,6 +251,12 @@
   /* Tight, dense table (Weekly Scoring — many week columns) */
   .tight-table th, .tight-table td { font-size: 12px; padding: 5px 7px; white-space: nowrap; }
   .tight-table td.team, .tight-table th:first-child { white-space: normal; }
+
+  /* Narrow table (Free Agent Budget Summary) -- content-width instead of
+     stretching to fill the card, so a 3-column table doesn't look sparse */
+  .narrow-table { table-layout: auto; width: auto; }
+  .narrow-table td, .narrow-table th { white-space: nowrap; padding-right: 22px; }
+  .narrow-table td:last-child, .narrow-table th:last-child { padding-right: 8px; }
 </style>
 </head>
 <body>
@@ -559,7 +565,7 @@ function computeMoneyTracker(champCheckboxChecked) {
 function renderMoneyTable(champCheckboxChecked) {
   const rows = computeMoneyTracker(champCheckboxChecked);
   return `
-    <table>
+    <table class="narrow-table">
       <thead><tr><th></th><th>Team</th><th class="num">Weekly Wins</th><th class="num">Money Won</th><th class="num">Buy-In Owed</th><th class="num">Net</th></tr></thead>
       <tbody>
         ${rows.map((t, i) => `
@@ -875,7 +881,7 @@ function renderSeasonStandingsTable() {
   const wrap = document.getElementById('seasonStandingsTableWrap');
   if (!wrap) return;
   wrap.innerHTML = `
-    <table>
+    <table class="narrow-table">
       <thead><tr>
         <th></th>
         <th class="sortable" onclick="setSeasonStandingsSort('name')">Team${arrow('name')}</th>
@@ -958,7 +964,7 @@ function renderStandings() {
       <div class="compact-grid">
         <div>
           <div class="compact-label" style="color:var(--win);">Highest Scorer</div>
-          <table>
+          <table class="narrow-table">
             <thead><tr><th class="num">Week</th><th>Team</th><th class="num">Points</th></tr></thead>
             <tbody>
               ${highScores.map(h => `<tr><td class="num">${h.week}</td><td class="team">${h.name}</td><td class="num">${h.points.toFixed(1)}</td></tr>`).join('') || '<tr><td colspan="3" class="placeholder">No completed weeks yet.</td></tr>'}
@@ -967,7 +973,7 @@ function renderStandings() {
         </div>
         <div>
           <div class="compact-label" style="color:var(--loss);">Lowest Scorer</div>
-          <table>
+          <table class="narrow-table">
             <thead><tr><th class="num">Week</th><th>Team</th><th class="num">Points</th></tr></thead>
             <tbody>
               ${lowScores.map(h => `<tr><td class="num">${h.week}</td><td class="team">${h.name}</td><td class="num">${h.points.toFixed(1)}</td></tr>`).join('') || '<tr><td colspan="3" class="placeholder">No completed weeks yet.</td></tr>'}
@@ -990,7 +996,7 @@ function renderStandings() {
     <section class="block">
       <h2>Median Standings</h2>
       <p class="sub">Each week, scoring above the 12-team median counts as a win; below counts as a loss</p>
-      <table>
+      <table class="narrow-table">
         <thead><tr><th></th><th>Team</th><th class="num">Median Record</th><th class="num">Points For</th><th></th></tr></thead>
         <tbody>
           ${med.map((t, i) => rowHtml(t, i, `<td></td>`)).join('')}
@@ -1000,7 +1006,7 @@ function renderStandings() {
     <section class="block">
       <h2>What-If Standings</h2>
       <p class="sub">Record if every team started their optimal lineup each week</p>
-      <table>
+      <table class="narrow-table">
         <thead><tr><th></th><th>Team</th><th class="num">What-If Record</th><th class="num">Optimal Points</th><th></th></tr></thead>
         <tbody>
           ${whatIf.map((t, i) => rowHtml(t, i, `<td></td>`)).join('') || '<tr><td colspan="4" class="placeholder">No box score data yet.</td></tr>'}
@@ -1010,7 +1016,7 @@ function renderStandings() {
     <section class="block">
       <h2>Median What-If Standings</h2>
       <p class="sub">Each week, optimal-lineup score above the 12-team median (of optimal scores) counts as a win; below counts as a loss</p>
-      <table>
+      <table class="narrow-table">
         <thead><tr><th></th><th>Team</th><th class="num">Median What-If Record</th><th class="num">Optimal Points</th><th></th></tr></thead>
         <tbody>
           ${medianWhatIf.map((t, i) => rowHtml(t, i, `<td></td>`)).join('') || '<tr><td colspan="4" class="placeholder">No box score data yet.</td></tr>'}
@@ -2009,6 +2015,26 @@ function computeFreeAgentOfferDates() {
 
 let faOfferDateFilter = null;
 
+// ESPN generates its own human-readable failure message (e.g. "Player has
+// already been added to another team") that the API doesn't expose --
+// only a status code. This maps the common codes to equivalent wording;
+// anything not in the map falls back to a cleaned-up version of the code
+// itself rather than a guess.
+const WAIVER_FAILURE_REASONS = {
+  FAILED_INVALIDPLAYERSOURCE: 'Player has already been added to another team.',
+  FAILED_ROSTER_INVALID: 'Roster would be invalid with this move.',
+  FAILED_BUDGET: 'Bid exceeded available FAAB budget.',
+  FAILED_ONTEAM: 'Player is already on this team.',
+  CANCELLED: 'Claim was cancelled.',
+  CANCELED: 'Claim was cancelled.'
+};
+
+function waiverFailureReason(status) {
+  if (!status) return 'Unknown reason.';
+  if (WAIVER_FAILURE_REASONS[status]) return WAIVER_FAILURE_REASONS[status];
+  return status.replace(/^FAILED_/, '').replace(/_/g, ' ').toLowerCase().replace(/^./, c => c.toUpperCase()) + '.';
+}
+
 function renderFreeAgentOffersReport() {
   const all = (LEAGUE && LEAGUE.transactions) || [];
   const dates = computeFreeAgentOfferDates();
@@ -2038,17 +2064,14 @@ function renderFreeAgentOffersReport() {
     if (successful) {
       const dropInfo = dropItem ? getPlayerNamePos(dropItem.playerId) : null;
       results = dropInfo
-        ? `Added. ${teamName(TEAMS[t.teamId])} dropped ${dropInfo.name}${dropInfo.pos ? ', ' + dropInfo.pos : ''} to Waivers.`
+        ? `Added. ${teamName(TEAMS[t.teamId])} dropped <strong>${dropInfo.name}</strong>${dropInfo.pos ? ', ' + dropInfo.pos : ''} to Waivers.`
         : 'Added.';
     } else {
-      // ESPN generates a specific human-readable failure reason (e.g. "player
-      // already added to another team") that the API doesn't expose directly
-      // -- showing the raw status here rather than guessing the wording.
-      results = `Unsuccessful. Reason: ${t.status || 'unknown'}.`;
+      results = `Unsuccessful. Reason: ${waiverFailureReason(t.status)}`;
     }
     return {
       team: teamName(TEAMS[t.teamId]),
-      claim: `${claim.name}${claim.pos ? ', ' + claim.pos : ''}`,
+      claim: `<strong>${claim.name}</strong>${claim.pos ? ', ' + claim.pos : ''}`,
       offer: (typeof t.bidAmount === 'number') ? `$${t.bidAmount}` : '—',
       results,
       successful
@@ -2066,7 +2089,7 @@ function renderFreeAgentOffersReport() {
             <td class="team">${r.team}</td>
             <td>${r.claim}</td>
             <td class="num">${r.offer}</td>
-            <td style="color:${r.successful ? 'var(--win)' : 'var(--loss)'}">${r.results}</td>
+            <td>${r.results}</td>
           </tr>`).join('') || '<tr><td colspan="5" class="placeholder">No offers processed this date.</td></tr>'}
       </tbody>
     </table>
@@ -2088,14 +2111,13 @@ function renderFaabBudgetTable() {
   const wrap = document.getElementById('faabBudgetTableWrap');
   if (!wrap) return;
   wrap.innerHTML = `
-    <table>
-      <thead><tr><th class="num">Pos</th><th>Team</th><th>Manager(s)</th><th class="num">Budget</th></tr></thead>
+    <table class="narrow-table">
+      <thead><tr><th class="num">Pos</th><th>Team</th><th class="num">Budget</th></tr></thead>
       <tbody>
         ${rows.map((r, i) => `
           <tr class="${i === 0 ? 'rank1' : ''}">
             <td class="num">${i + 1}</td>
             <td class="team">${r.name}</td>
-            <td>${r.manager}</td>
             <td class="num">${r.remaining !== null ? '$' + r.remaining : '—'}</td>
           </tr>`).join('')}
       </tbody>
