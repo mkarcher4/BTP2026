@@ -15,7 +15,7 @@ import os
 import requests
 
 # ---- CONFIG: these two are not sensitive, safe to commit ----
-LEAGUE_ID = 490456
+LEAGUE_ID = 676950
 # ---------------------------------------------------------------
 
 SWID = os.environ.get("ESPN_SWID", "")
