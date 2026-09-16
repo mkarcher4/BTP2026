@@ -1450,14 +1450,63 @@ function computeDraftRecap() {
     p.grade = (p.draftPosRank && p.finishPosRank) ? (p.draftPosRank - p.finishPosRank) : null;
   });
 
+  // Weighted Grade: accounts for BOTH round drafted and the fact that raw
+  // points aren't comparable across positions (e.g. the best TE that year
+  // might score about the same raw points as a middling QB or WR, but that
+  // TE total is exceptional for the position while the QB/WR total is not).
+  //
+  // 1. Within each position, convert points to a z-score against that
+  //    position's own mean/stdev (drafted players only) -- this puts every
+  //    position on the same normalized scale.
+  // 2. Within each ROUND, average those z-scores across all positions to
+  //    get "what a pick in this round was expected to return."
+  // 3. Weighted Grade = player's z-score minus their round's expected
+  //    z-score. Positive = outperformed the bar for that round once
+  //    position scale is accounted for; negative = underperformed it.
+  Object.values(posGroups).forEach(group => {
+    const pts = group.map(p => p.points).filter(v => v !== null && v !== undefined);
+    if (pts.length === 0) return;
+    const mean = pts.reduce((a, b) => a + b, 0) / pts.length;
+    const variance = pts.length > 1
+      ? pts.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / (pts.length - 1)
+      : 0;
+    const stdev = Math.sqrt(variance);
+    group.forEach(p => {
+      if (p.points === null || p.points === undefined) { p.zScore = null; return; }
+      p.zScore = stdev > 0 ? (p.points - mean) / stdev : 0;
+    });
+  });
+
+  const roundGroups = {};
+  enriched.forEach(p => {
+    if (p.zScore === null || p.zScore === undefined) return;
+    roundGroups[p.round] = roundGroups[p.round] || [];
+    roundGroups[p.round].push(p.zScore);
+  });
+  const roundExpectedZ = {};
+  Object.entries(roundGroups).forEach(([round, zScores]) => {
+    roundExpectedZ[round] = zScores.reduce((a, b) => a + b, 0) / zScores.length;
+  });
+
+  enriched.forEach(p => {
+    if (p.zScore === null || p.zScore === undefined || roundExpectedZ[p.round] === undefined) {
+      p.weightedGrade = null;
+    } else {
+      p.weightedGrade = p.zScore - roundExpectedZ[p.round];
+    }
+  });
+
   return enriched;
 }
 
 let draftRecapSort = { key: 'overall', dir: 'asc' };
+let draftRecapFilters = { team: 'all', pos: 'all' };
+let draftRecapAllPicks = [];
 
 function renderDraftRecapTab() {
   const container = document.getElementById('view-draftrecap');
   const picks = computeDraftRecap();
+  draftRecapAllPicks = picks;
 
   if (picks.length === 0) {
     container.innerHTML = `
@@ -1469,22 +1518,66 @@ function renderDraftRecapTab() {
     return;
   }
 
+  const teamIds = Object.keys(TEAMS);
+  const positions = [...new Set(picks.map(p => p.pos).filter(Boolean))].sort();
+
   container.innerHTML = `
     <section class="block">
       <h2>Draft Recap</h2>
       <p class="sub">
-        Draft Grade compares where a player was taken among others at their position (Draft Position Rank) to how
+        Position Grade compares where a player was taken among others at their position (Draft Position Rank) to how
         they finished the season in total points among all drafted players at that position (Finish Position Rank).
-        Positive = steal, negative = bust. Points include bench scoring, since this grades the pick itself, not how
-        it was managed. Season totals come from ESPN's full player pool, so they're accurate even for players who
-        were dropped and never picked up again; a pick is only marked "incomplete" in the rare case that data isn't
+        Positive = steal, negative = bust.
+      </p>
+      <p class="sub">
+        Weighted Grade accounts for round drafted and for positions scoring on very different scales -- e.g. the
+        best TE in a season might score about the same raw points as a middling QB or WR, but that total is
+        exceptional for a TE and unremarkable for a QB. Each player's points are converted to a z-score against
+        others at their own position, then compared to the average z-score of everyone taken in that same round.
+        Positive = beat the bar for that round once position scale is accounted for; negative = fell short of it.
+      </p>
+      <p class="sub">
+        Both use total season points including bench scoring, since this grades the pick itself, not how it was
+        managed. Season totals come from ESPN's full player pool, so they're accurate even for players who were
+        dropped and never picked up again; a pick is only marked "incomplete" in the rare case that data isn't
         available either. Click a column header to sort.
       </p>
+      <div class="h2h-picker">
+        <select id="draftRecapTeamFilter">
+          <option value="all">All Teams</option>
+          ${teamIds.map(id => `<option value="${id}">${teamName(TEAMS[id])}</option>`).join('')}
+        </select>
+        <select id="draftRecapPosFilter">
+          <option value="all">All Positions</option>
+          ${positions.map(p => `<option value="${p}">${p}</option>`).join('')}
+        </select>
+      </div>
       <div id="draftRecapTableWrap"></div>
     </section>
   `;
 
-  renderDraftRecapTable(picks);
+  const teamSel = document.getElementById('draftRecapTeamFilter');
+  const posSel = document.getElementById('draftRecapPosFilter');
+  teamSel.value = draftRecapFilters.team;
+  posSel.value = draftRecapFilters.pos;
+  teamSel.addEventListener('change', () => {
+    draftRecapFilters.team = teamSel.value;
+    renderDraftRecapTable(applyDraftRecapFilters(draftRecapAllPicks));
+  });
+  posSel.addEventListener('change', () => {
+    draftRecapFilters.pos = posSel.value;
+    renderDraftRecapTable(applyDraftRecapFilters(draftRecapAllPicks));
+  });
+
+  renderDraftRecapTable(applyDraftRecapFilters(picks));
+}
+
+function applyDraftRecapFilters(picks) {
+  return picks.filter(p => {
+    if (draftRecapFilters.team !== 'all' && String(p.teamId) !== String(draftRecapFilters.team)) return false;
+    if (draftRecapFilters.pos !== 'all' && p.pos !== draftRecapFilters.pos) return false;
+    return true;
+  });
 }
 
 function renderDraftRecapTable(picks) {
@@ -1516,12 +1609,16 @@ function renderDraftRecapTable(picks) {
         ${col('points', 'Points')}
         ${col('draftPosRank', 'Draft Rank')}
         ${col('finishPosRank', 'Finish Rank')}
-        ${col('grade', 'Grade')}
+        ${col('grade', 'Position Grade')}
+        ${col('weightedGrade', 'Weighted Grade')}
       </tr></thead>
       <tbody>
         ${sorted.map(p => {
           const gradeColor = p.grade === null ? 'var(--text-muted)' : p.grade > 0 ? 'var(--win)' : p.grade < 0 ? 'var(--loss)' : 'var(--text-muted)';
           const gradeLabel = p.grade === null ? '—' : (p.grade > 0 ? `+${p.grade}` : `${p.grade}`);
+          const wg = p.weightedGrade;
+          const wgColor = wg === null || wg === undefined ? 'var(--text-muted)' : wg > 0 ? 'var(--win)' : wg < 0 ? 'var(--loss)' : 'var(--text-muted)';
+          const wgLabel = wg === null || wg === undefined ? '—' : (wg > 0 ? `+${wg.toFixed(2)}` : wg.toFixed(2));
           return `
           <tr>
             <td class="num">${p.round}</td>
@@ -1533,8 +1630,9 @@ function renderDraftRecapTable(picks) {
             <td class="num">${p.draftPosRank ? p.pos + p.draftPosRank : '—'}</td>
             <td class="num">${p.finishPosRank ? p.pos + p.finishPosRank : '—'}</td>
             <td class="num" style="color:${gradeColor}; font-weight:700;">${gradeLabel}</td>
+            <td class="num" style="color:${wgColor}; font-weight:700;">${wgLabel}</td>
           </tr>`;
-        }).join('')}
+        }).join('') || '<tr><td colspan="10" class="placeholder">No picks match this filter.</td></tr>'}
       </tbody>
     </table>
     </div>
@@ -1548,7 +1646,7 @@ function setDraftRecapSort(key) {
     draftRecapSort.key = key;
     draftRecapSort.dir = (key === 'teamName' || key === 'playerName' || key === 'pos') ? 'asc' : 'desc';
   }
-  renderDraftRecapTable(computeDraftRecap());
+  renderDraftRecapTable(applyDraftRecapFilters(draftRecapAllPicks));
 }
 
 
